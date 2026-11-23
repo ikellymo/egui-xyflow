@@ -114,6 +114,8 @@ struct CanvasMemory {
     resize_state: Option<crate::interaction::resize::ResizeState>,
     /// Whether we were dragging a node last frame (to detect drag-start).
     was_dragging_node: bool,
+    /// Origin and travel of the current node drag, for snap-to-grid.
+    drag_snap: crate::interaction::drag::DragSnapState,
     /// Active edge anchor drag state.
     anchor_drag: Option<AnchorDragState>,
 }
@@ -611,6 +613,11 @@ where
         // ── Multi-node drag ───────────────────────────────────────────────────
         // If the actively dragged node is selected, move all selected nodes together.
         if let Some(ref drag_id) = active_drag_id {
+            if !mem.was_dragging_node {
+                mem.drag_snap.reset();
+            }
+            mem.drag_snap.advance(active_drag_delta, &transform);
+
             let is_selected = self
                 .state
                 .node_lookup
@@ -627,6 +634,7 @@ where
                     self.state.config.snap_to_grid,
                     &self.state.config.snap_grid,
                     &self.state.node_lookup,
+                    &mut mem.drag_snap,
                 );
 
                 for change in &multi_changes {
@@ -666,6 +674,7 @@ where
                     self.state.config.snap_to_grid,
                     &self.state.config.snap_grid,
                     flow_pos,
+                    &mut mem.drag_snap,
                 ) {
                     if let NodeChange::Position {
                         position: Some(pos),
