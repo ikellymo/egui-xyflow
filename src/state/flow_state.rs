@@ -325,7 +325,16 @@ impl<ND: Clone, ED: Clone> FlowState<ND, ED> {
         if bounds == egui::Rect::NOTHING {
             return;
         }
-        let target = crate::graph::utils::get_viewport_for_bounds(
+        let target = self.viewport_to_fit(bounds, canvas_rect, padding);
+        self.animate_viewport(target, current_time);
+    }
+
+    /// Viewport that frames `bounds` (flow space) inside `canvas_rect` (screen
+    /// space). The viewport offset is a screen position, so the canvas origin
+    /// is added: a canvas that does not start at the window's top-left corner
+    /// (next to a side panel, below a toolbar) is framed correctly.
+    fn viewport_to_fit(&self, bounds: egui::Rect, canvas_rect: egui::Rect, padding: f32) -> Viewport {
+        let mut target = crate::graph::utils::get_viewport_for_bounds(
             bounds,
             canvas_rect.width(),
             canvas_rect.height(),
@@ -333,7 +342,9 @@ impl<ND: Clone, ED: Clone> FlowState<ND, ED> {
             self.config.max_zoom,
             padding,
         );
-        self.animate_viewport(target, current_time);
+        target.x += canvas_rect.min.x;
+        target.y += canvas_rect.min.y;
+        target
     }
 
     /// Animate the viewport to fit an arbitrary **flow-space** bounding box
@@ -366,14 +377,7 @@ impl<ND: Clone, ED: Clone> FlowState<ND, ED> {
             return;
         }
 
-        let target = crate::graph::utils::get_viewport_for_bounds(
-            flow_rect,
-            canvas_rect.width(),
-            canvas_rect.height(),
-            self.config.min_zoom,
-            self.config.max_zoom,
-            padding,
-        );
+        let target = self.viewport_to_fit(flow_rect, canvas_rect, padding);
         self.animate_viewport(target, current_time);
     }
 
@@ -392,14 +396,7 @@ impl<ND: Clone, ED: Clone> FlowState<ND, ED> {
             return;
         }
 
-        let target = crate::graph::utils::get_viewport_for_bounds(
-            bounds,
-            canvas_rect.width(),
-            canvas_rect.height(),
-            self.config.min_zoom,
-            self.config.max_zoom,
-            padding,
-        );
+        let target = self.viewport_to_fit(bounds, canvas_rect, padding);
         self.animate_viewport(target, current_time);
     }
 
@@ -620,5 +617,24 @@ fn compute_handle_offset(
             // Resolved dynamically at render time; place at center for now
             (node_w / 2.0 - half, node_h / 2.0 - half)
         }
+    }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+
+    #[test]
+    fn fit_view_centres_nodes_in_a_canvas_that_is_offset_on_screen() {
+        let mut state: FlowState<(), ()> = FlowState::new(FlowConfig::default());
+        state.add_node(Node::builder("a").position(egui::pos2(0.0, 0.0)).size(100.0, 100.0).build());
+        // A canvas below a 50 px toolbar and right of a 200 px side panel.
+        let canvas = egui::Rect::from_min_size(egui::pos2(200.0, 50.0), egui::vec2(800.0, 600.0));
+
+        let target = state.viewport_to_fit(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)), canvas, 0.0);
+
+        // The node's centre (50, 50 in flow space) must land on the canvas centre.
+        let screen = egui::pos2(50.0 * target.zoom + target.x, 50.0 * target.zoom + target.y);
+        assert!((screen - canvas.center()).length() < 1e-3, "{screen:?} vs {:?}", canvas.center());
     }
 }
