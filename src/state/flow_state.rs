@@ -643,7 +643,10 @@ mod handle_bounds_tests {
         let h = &build_handle_bounds(&node, &FlowConfig::default()).target[0];
         assert_eq!((h.width, h.height), (20.0, 30.0));
         assert_eq!(h.center(), egui::pos2(0.0, 30.0));
+    }
+}
 
+#[cfg(test)]
 mod fit_tests {
     use super::*;
 
