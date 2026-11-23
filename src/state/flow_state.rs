@@ -14,7 +14,7 @@ use crate::graph::utils::get_nodes_bounds;
 use crate::types::changes::{EdgeChange, NodeChange};
 use crate::types::connection::ConnectionState;
 use crate::types::edge::{Edge, EdgeId};
-use crate::types::handle::{Handle, HandleType};
+use crate::types::handle::{Handle, HandleType, NodeHandle};
 use crate::types::node::{InternalNode, Node, NodeHandleBounds, NodeId, NodeInternals};
 use crate::types::position::Position;
 use crate::types::viewport::Viewport;
@@ -512,73 +512,58 @@ impl<ND: Clone, ED: Clone> FlowState<ND, ED> {
 }
 
 /// Build handle bounds from user-specified handles.
+///
+/// A handle with a non-zero [`NodeHandle::x`] or [`NodeHandle::y`] is placed
+/// at exactly that offset. All other handles are spread evenly along their
+/// side, counting only the automatically placed handles on that side.
 fn build_handle_bounds<D>(node: &Node<D>, config: &FlowConfig) -> NodeHandleBounds {
     let node_w = node.width.unwrap_or(config.default_node_width);
     let node_h = node.height.unwrap_or(config.default_node_height);
-    let handle_size = config.handle_size;
 
-    // Count handles per position for even spacing
-    let source_handles: Vec<_> = node
-        .handles
-        .iter()
-        .filter(|h| h.handle_type == HandleType::Source)
-        .collect();
-    let target_handles: Vec<_> = node
-        .handles
-        .iter()
-        .filter(|h| h.handle_type == HandleType::Target)
-        .collect();
-
-    let mut source = Vec::with_capacity(source_handles.len());
-    let mut target = Vec::with_capacity(target_handles.len());
-
-    for nh in source_handles.iter() {
-        let count = source_handles
+    let resolve = |handle_type: HandleType| -> Vec<Handle> {
+        let is_manual = |h: &NodeHandle| h.x != 0.0 || h.y != 0.0;
+        let of_type: Vec<&NodeHandle> = node
+            .handles
             .iter()
-            .filter(|h| h.position == nh.position)
-            .count();
-        let idx = source_handles
+            .filter(|h| h.handle_type == handle_type)
+            .collect();
+        of_type
             .iter()
-            .filter(|h| h.position == nh.position)
-            .position(|h| std::ptr::eq(*h, *nh))
-            .unwrap_or(0);
-        let (x, y) = compute_handle_offset(nh.position, node_w, node_h, handle_size, count, idx);
-        source.push(Handle {
-            id: nh.id.clone(),
-            node_id: node.id.0.clone(), // Arc<str> clone — O(1)
-            x,
-            y,
-            position: nh.position,
-            handle_type: HandleType::Source,
-            width: handle_size,
-            height: handle_size,
-        });
+            .map(|nh| {
+                let width = nh.width.unwrap_or(config.handle_size);
+                let height = nh.height.unwrap_or(config.handle_size);
+                let (x, y) = if is_manual(nh) {
+                    (nh.x, nh.y)
+                } else {
+                    let auto_on_side = || {
+                        of_type
+                            .iter()
+                            .filter(|h| h.position == nh.position && !is_manual(h))
+                    };
+                    let count = auto_on_side().count();
+                    let idx = auto_on_side()
+                        .position(|h| std::ptr::eq(*h, *nh))
+                        .unwrap_or(0);
+                    compute_handle_offset(nh.position, node_w, node_h, width, height, count, idx)
+                };
+                Handle {
+                    id: nh.id.clone(),
+                    node_id: node.id.0.clone(), // Arc<str> clone — O(1)
+                    x,
+                    y,
+                    position: nh.position,
+                    handle_type,
+                    width,
+                    height,
+                }
+            })
+            .collect()
+    };
+
+    NodeHandleBounds {
+        source: resolve(HandleType::Source),
+        target: resolve(HandleType::Target),
     }
-
-    for nh in target_handles.iter() {
-        let count = target_handles
-            .iter()
-            .filter(|h| h.position == nh.position)
-            .count();
-        let idx = target_handles
-            .iter()
-            .filter(|h| h.position == nh.position)
-            .position(|h| std::ptr::eq(*h, *nh))
-            .unwrap_or(0);
-        let (x, y) = compute_handle_offset(nh.position, node_w, node_h, handle_size, count, idx);
-        target.push(Handle {
-            id: nh.id.clone(),
-            node_id: node.id.0.clone(), // Arc<str> clone — O(1)
-            x,
-            y,
-            position: nh.position,
-            handle_type: HandleType::Target,
-            width: handle_size,
-            height: handle_size,
-        });
-    }
-
-    NodeHandleBounds { source, target }
 }
 
 /// Compute handle offset within node bounds.
@@ -586,39 +571,80 @@ fn compute_handle_offset(
     position: Position,
     node_w: f32,
     node_h: f32,
-    handle_size: f32,
+    handle_w: f32,
+    handle_h: f32,
     count: usize,
     index: usize,
 ) -> (f32, f32) {
-    let half = handle_size / 2.0;
+    let half_w = handle_w / 2.0;
+    let half_h = handle_h / 2.0;
     match position {
         Position::Top => {
             let spacing = node_w / (count as f32 + 1.0);
-            let x = spacing * (index as f32 + 1.0) - half;
-            (x, -half)
+            let x = spacing * (index as f32 + 1.0) - half_w;
+            (x, -half_h)
         }
         Position::Bottom => {
             let spacing = node_w / (count as f32 + 1.0);
-            let x = spacing * (index as f32 + 1.0) - half;
-            (x, node_h - half)
+            let x = spacing * (index as f32 + 1.0) - half_w;
+            (x, node_h - half_h)
         }
         Position::Left => {
             let spacing = node_h / (count as f32 + 1.0);
-            let y = spacing * (index as f32 + 1.0) - half;
-            (-half, y)
+            let y = spacing * (index as f32 + 1.0) - half_h;
+            (-half_w, y)
         }
         Position::Right => {
             let spacing = node_h / (count as f32 + 1.0);
-            let y = spacing * (index as f32 + 1.0) - half;
-            (node_w - half, y)
+            let y = spacing * (index as f32 + 1.0) - half_h;
+            (node_w - half_w, y)
         }
         Position::Center => {
             // Handle sits at the center of the node
-            (node_w / 2.0 - half, node_h / 2.0 - half)
+            (node_w / 2.0 - half_w, node_h / 2.0 - half_h)
         }
         Position::Closest => {
             // Resolved dynamically at render time; place at center for now
-            (node_w / 2.0 - half, node_h / 2.0 - half)
+            (node_w / 2.0 - half_w, node_h / 2.0 - half_h)
         }
+    }
+}
+
+#[cfg(test)]
+mod handle_bounds_tests {
+    use super::*;
+
+    fn node_with(handles: Vec<NodeHandle>) -> Node<()> {
+        let mut node: Node<()> = Node::builder("n").size(100.0, 60.0).build();
+        node.handles = handles;
+        node
+    }
+
+    #[test]
+    fn manual_offset_is_used_as_given() {
+        let node = node_with(vec![NodeHandle::source(Position::Right).at(90.0, 12.0)]);
+        let bounds = build_handle_bounds(&node, &FlowConfig::default());
+        assert_eq!((bounds.source[0].x, bounds.source[0].y), (90.0, 12.0));
+        assert_eq!(bounds.source[0].position, Position::Right);
+    }
+
+    #[test]
+    fn automatic_handles_are_spaced_without_counting_manual_ones() {
+        let config = FlowConfig::default();
+        let alone = node_with(vec![NodeHandle::source(Position::Right)]);
+        let mixed = node_with(vec![
+            NodeHandle::source(Position::Right).at(90.0, 12.0),
+            NodeHandle::source(Position::Right),
+        ]);
+        let expected = build_handle_bounds(&alone, &config).source[0].y;
+        assert_eq!(build_handle_bounds(&mixed, &config).source[1].y, expected);
+    }
+
+    #[test]
+    fn size_override_is_applied_and_keeps_the_handle_centred_on_the_edge() {
+        let node = node_with(vec![NodeHandle::target(Position::Left).size(20.0, 30.0)]);
+        let h = &build_handle_bounds(&node, &FlowConfig::default()).target[0];
+        assert_eq!((h.width, h.height), (20.0, 30.0));
+        assert_eq!(h.center(), egui::pos2(0.0, 30.0));
     }
 }

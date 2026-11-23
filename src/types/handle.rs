@@ -58,12 +58,13 @@ pub struct NodeHandle {
     pub handle_type: HandleType,
     /// Which side of the node this handle is placed on.
     pub position: Position,
-    /// Optional manual X offset relative to the node origin. Defaults to `0.0`,
-    /// in which case [`Position`] drives placement along its side.
+    /// Optional manual X offset of the handle's top-left corner, relative to
+    /// the node origin. When both `x` and `y` are `0.0` (the default) the
+    /// handle is spaced automatically along the side given by [`Position`].
     #[cfg_attr(feature = "serde", serde(default))]
     pub x: f32,
-    /// Optional manual Y offset relative to the node origin. Defaults to `0.0`,
-    /// in which case [`Position`] drives placement along its side.
+    /// Optional manual Y offset of the handle's top-left corner, relative to
+    /// the node origin. See [`x`](Self::x).
     #[cfg_attr(feature = "serde", serde(default))]
     pub y: f32,
     /// Override for the handle's hit-area width; falls back to `FlowConfig`.
@@ -97,6 +98,22 @@ impl NodeHandle {
             width: None,
             height: None,
         }
+    }
+
+    /// Place the handle manually: `x`, `y` is the offset of its top-left
+    /// corner from the node origin. The handle keeps its [`Position`], which
+    /// still decides the direction edges leave in.
+    pub fn at(mut self, x: f32, y: f32) -> Self {
+        self.x = x;
+        self.y = y;
+        self
+    }
+
+    /// Override the handle's hit-area size.
+    pub fn size(mut self, width: f32, height: f32) -> Self {
+        self.width = Some(width);
+        self.height = Some(height);
+        self
     }
 
     /// Assign an identifier to this handle for multi-handle nodes.
